@@ -120,47 +120,7 @@ namespace VirtualMemory
 		/*检查自己死了么*/
 		operator bool() const noexcept;
 	};
-	/*
-	* Is Unused
-	*/
-	class SharedMemory
-	{
-		Permission permissions;//权限
-		std::size_t size;
-		void* data;
-		char* name;
-#ifdef _WIN32
-		void* page;
-#elif defined(__linux__)
-		int page;
-#endif
-	public:
-		/*构造函数*/
-		SharedMemory(std::size_t size, char* name, std::uint8_t permission);
-		/*
-		* Read Only Function
-		* 如果permmisions|Permission::Read==0则会抛异常
-		*/
-		template<typename T>
-		const T* Read() const
-		{
-			if (sizeof(T) > size) throw std::bad_alloc{ "Out Of Memory" };
-			if (!(permissions & static_cast<uint8_t>(Permission::Read))) throw std::runtime_error{ "This Memory is unable to read." };
-			return static_cast<T*>(data);
-		}
-		/*Read and Write*/
-		template<typename T>
-		T* ReadWrite()
-		{
-			if (sizeof(T) > size) throw std::bad_alloc{ "Out Of Memory" };
-			if (!((permissions & static_cast<uint8_t>(Permission::Read) && (permissions & static_cast<uint8_t>(Permission::Write))))) throw std::runtime_error{ "This Memory is unable to read or write." };
-			return static_cast<T*>(data);
-		}
-		explicit void const* BaseAddress() noexcept const;
-		std::size_t Size() noexcept const;
-		
-		void Write(std::size_t offset, std::span<std::byte> new_data);
-	};
+
 
 	/*共享节点*/
 	struct Node
