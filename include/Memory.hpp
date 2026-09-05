@@ -7,12 +7,8 @@
 
 #pragma once
 #include <cstddef>
-#include <span>
-#include <concepts>
 #include <string_view>
-#include <stdexcept>
 #include <atomic>
-#include <filesystem>
 
 
 namespace VirtualMemory
@@ -122,22 +118,27 @@ namespace VirtualMemory
 	};
 
 	namespace detail
-	{/*共享节点*/
-	struct Node
 	{
-		std::atomic<std::size_t> ref_count {1};
-		std::atomic<std::size_t> locked {0};
-	};
+		/*共享节点*/
+		struct Node
+		{
+			const std::uint64_t magic = 0xDEADBEEF;
+			std::atomic<std::size_t> ref_count{ 1 };
+			std::atomic<std::size_t> mlock_count{ 0 };
+			char name[256];
+			std::size_t size{};
+			std::atomic<std::size_t> weak_count{ 0 };
+
+		};
 	}
 
 	/*共享内存锁*/
 	class SharedMemoryLock
 	{
 		detail::Node* node;
-		std::size_t size;
 		bool unlocked = false;
 	public:
-		SharedMemoryLock(detail::Node* node, std::size_t size);
+		SharedMemoryLock(detail::Node* node);
 		SharedMemoryLock(SharedMemoryLock&&) noexcept;
 		SharedMemoryLock& operator=(SharedMemoryLock&&) noexcept;
 		SharedMemoryLock(SharedMemoryLock const&) = delete;
@@ -152,11 +153,10 @@ namespace VirtualMemory
 	class SharedTempObserver
 	{
 		detail::Node* node;
-		std::string_view name;
 		Permission permissions;
 		bool page_set = true;
 	public:
-		SharedTempObserver(Permission permissions, std::string_view name);
+		SharedTempObserver(Permission permissions, char name[256]);
 		SharedTempObserver(SharedTempObserver const&) = delete;
 		SharedTempObserver& operator=(SharedTempObserver const&) = delete;
 		SharedTempObserver(SharedTempObserver&& other) noexcept;
@@ -185,21 +185,24 @@ namespace VirtualMemory
 	class SharedPermObserver
 	{
 		detail::Node* node;
-		std::string_view name;
 		Permission permissions;
 		bool page_set = true;
 	public:
-		SharedPermObserver(Permission permissions, std::string_view name);
+		SharedPermObserver(Permission permissions, char name[256]);
 		SharedPermObserver(SharedPermObserver const&) = delete;
 		SharedPermObserver& operator=(SharedPermObserver const&) = delete;
 		SharedPermObserver(SharedPermObserver&& other) noexcept;
 		SharedPermObserver& operator=(SharedPermObserver&& other) noexcept;
+
 		std::size_t Size() const noexcept;
+
 		void* Data() const noexcept;
 		std::string_view Name() const noexcept;
+
 		bool CanWrite() const noexcept;
 		bool CanRead() const noexcept;
 		bool CanExecute() const noexcept;
+
 		void ChangeVisitMethod(bool page_set) const noexcept;
 		SharedMemoryLock Lock();
 		/*重置权限*/
