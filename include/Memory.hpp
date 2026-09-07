@@ -28,16 +28,22 @@ namespace VirtualMemory
 	Permission operator&(Permission lhs, Permission rhs);
 	
 
-
+	namespace detail2
+	{
+		struct Node
+		{
+			std::size_t size{};
+			 std::size_t committed_size{};
+		};
+	}
 
 	/*内存锁*/
 	class UniqueMemoryLock
 	{
-		std::size_t size;
-		void* memory;
+		detail2::Node* memory;
 		bool unlocked = false;
 	public:
-		UniqueMemoryLock(void* p, std::size_t size);
+		UniqueMemoryLock(detail2::Node* p);
 		UniqueMemoryLock(UniqueMemoryLock&) = delete;
 		UniqueMemoryLock& operator=(UniqueMemoryLock&) = delete;
 		UniqueMemoryLock(UniqueMemoryLock&&) noexcept;
@@ -45,49 +51,6 @@ namespace VirtualMemory
 		void Unlock();
 		std::size_t Size() const noexcept;
 		~UniqueMemoryLock();
-	};
-
-	/*
-	* UniqueVirtual类
-	* 作用：独占虚拟内存
-	*/
-	class UniqueVirtual
-	{
-    	void* base = nullptr;
-    	size_t total_size = 0;
-    	size_t committed_size = 0;
-
-	public:
-    	explicit UniqueVirtual(size_t size, void* hint = nullptr);
-    	~UniqueVirtual() noexcept;
-
-    	// 移动
-    	UniqueVirtual(UniqueVirtual&&) noexcept;
-    	UniqueVirtual& operator=(UniqueVirtual&&) noexcept;	
-
-    	// 禁止拷贝
-    	UniqueVirtual(UniqueVirtual const&) = delete;
-    	UniqueVirtual& operator=(UniqueVirtual const&) = delete;
-
-    	// 查询
-    	void* Data() const noexcept { return base; }
-    	size_t Size() const noexcept { return total_size; }
-    	size_t CommittedSize() const noexcept { return committed_size; }
-    	bool IsFullyCommitted() const noexcept { return committed_size == total_size; }
-    	explicit operator bool() const noexcept { return base != nullptr; }
-
-    	// 提交/退回
-    	void CommitAll();                    // 全部提交，失败抛std::bad_alloc
-    	void CommitRange(size_t offset, size_t bytes);  // 部分提交
-    	void DecommitAll();                  // 全部退回
-    	void DecommitRange(size_t offset, size_t bytes); // 部分退回
-
-    	// 确保某段可用（不够就补）
-    	void EnsureRange(size_t offset, size_t bytes);
-
-		UniqueMemoryLock Lock();
-    	// 释放所有权
-    	void* Release() noexcept;	
 	};
 
 
@@ -117,7 +80,47 @@ namespace VirtualMemory
 		operator bool() const noexcept { return data != nullptr; }
 	};
 
-	namespace detail
+
+	/*
+	* UniqueVirtual类
+	* 作用：独占虚拟内存
+	*/
+	class UniqueVirtual
+	{
+		detail2::Node* base;
+
+	public:
+		explicit UniqueVirtual(size_t size, void* hint = nullptr);
+		~UniqueVirtual() noexcept;
+
+		// 移动
+		UniqueVirtual(UniqueVirtual&&) noexcept;
+		UniqueVirtual& operator=(UniqueVirtual&&) noexcept;
+
+		// 禁止拷贝
+		UniqueVirtual(UniqueVirtual const&) = delete;
+		UniqueVirtual& operator=(UniqueVirtual const&) = delete;
+
+		// 查询
+		void* Data() const noexcept { return base; }
+		size_t Size() const noexcept { return base->size; }
+		size_t CommittedSize() const noexcept { return base->committed_size; }
+		bool IsFullyCommitted() const noexcept { return base->committed_size == base->size; }
+		explicit operator bool() const noexcept { return base != nullptr; }
+
+		//分配
+		UniqueCommit Commit(std::size_t size);
+
+		// 确保某段可用（不够就补）
+		void EnsureRange(size_t bytes);
+
+		UniqueMemoryLock Lock();
+		// 释放所有权
+		void* Release() noexcept;
+	};
+
+
+	namespace detail1
 	{
 		/*共享节点*/
 		struct Node
@@ -135,10 +138,10 @@ namespace VirtualMemory
 	/*共享内存锁*/
 	class SharedMemoryLock
 	{
-		detail::Node* node;
+		detail1::Node* node;
 		bool unlocked = false;
 	public:
-		SharedMemoryLock(detail::Node* node);
+		SharedMemoryLock(detail1::Node* node);
 		SharedMemoryLock(SharedMemoryLock&&) noexcept;
 		SharedMemoryLock& operator=(SharedMemoryLock&&) noexcept;
 		SharedMemoryLock(SharedMemoryLock const&) = delete;
@@ -152,7 +155,7 @@ namespace VirtualMemory
 	/*带权限的观察者，不知道创建者是否死亡，只知道当前引用计数是否归零，如果归零则内存归还*/
 	class SharedTempObserver
 	{
-		detail::Node* node;
+		detail1::Node* node;
 		Permission permissions;
 		bool page_set = true;
 	public:
@@ -184,7 +187,7 @@ namespace VirtualMemory
 
 	class SharedPermObserver
 	{
-		detail::Node* node;
+		detail1::Node* node;
 		Permission permissions;
 		bool page_set = true;
 	public:
