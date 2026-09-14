@@ -1,3 +1,4 @@
+.vs/
 out/build/ALL_BUILD.vcxproj
 out/build/ALL_BUILD.vcxproj.filters
 out/build/cmake_install.cmake

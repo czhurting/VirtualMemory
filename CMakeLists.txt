@@ -7,9 +7,9 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 
 # 按平台选源文件
 if (WIN32)
-    set(PLATFORM_SRCS src/MemoryForWindows.cpp)
+    set(PLATFORM_SRCS src/UniqueMemoryForWindows.cpp)
 elseif (UNIX)
-    set(PLATFORM_SRCS src/MemoryForLinux.cpp)
+    set(PLATFORM_SRCS src/UniqueMemoryForLinux.cpp)
 endif()
 
 add_library(${PROJECT_NAME} SHARED
