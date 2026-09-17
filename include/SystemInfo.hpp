@@ -6,9 +6,9 @@
 #include <unistd.h>
 #endif
 
-namespace System
+namespace SystemInfo
 {
-#ifdef WIN32
+#ifdef _WIN32
     struct SYSTEM_INFO
     {
         DWORD page_size;
@@ -23,6 +23,10 @@ namespace System
         return { si.dwPageSize, si.dwNumberOfProcessors, si.dwNumberOfProcessors };
     }
 
+    inline DWORD GetPID()
+    {
+        return ::GetCurrentProcessId();
+    }
 #else
 
     struct SYSTEM_INFO
@@ -40,6 +44,9 @@ namespace System
             sysconf(_SC_NPROCESSORS_CONF)
         };
     }
-
+    inline int GetPID()
+    {
+        return ::getpid();
+    }
 #endif
 }

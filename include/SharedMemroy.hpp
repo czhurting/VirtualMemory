@@ -10,8 +10,8 @@
 
 namespace shm 
 {
-
-	inline std::size_t PageSize = System::GetSystemInfo().page_size;
+	inline std::size_t PageSize = SystemInfo::GetSystemInfo().page_size;
+	inline int PID = SystemInfo::GetPID();
 
 	namespace detail
 	{
@@ -23,7 +23,7 @@ namespace shm
 				(std::uint64_t(VIRTUAL_MEMORY__MAJOR_VERSION) << 32) |
 				(std::uint64_t(VIRTUAL_MEMORY__MINOR_VERSION) << 16) |
 				(std::uint64_t(VIRTUAL_MEMORY__PATCH_VERSION));
-			std::atomic<pid_t> owner_pid;
+			std::atomic<int> owner_pid;
 			std::atomic<std::uint64_t> create_time;
 			std::atomic<std::size_t> ref_count{ 1 };
 			std::atomic<std::size_t> mlock_count{ 0 };
@@ -47,15 +47,6 @@ namespace shm
 			};
 			ProcessMutex mutex{};
 		};
-		struct PageNode
-		{
-			alignas(4096);
-			PageNode() = delete;
-			PageNode(PageNode const&) = delete;
-			PageNode& operator=(PageNode const&) = delete;
-			PageNode(PageNode&&) = delete;
-			PageNode& operator=(PageNode&&) = delete;
-		};
 	}
 
 	enum class OSP
@@ -75,7 +66,7 @@ namespace shm
 		Permission permission;
 		SharedMemory(detail::Node* value, Permission permission, std::uintptr_t fd) :node(value), permission(permission), fd(fd)
 		{
-			if (node == nullptr)
+			if (!node)
 			{
 				throw std::runtime_error("Failed to create or open shared memory");
 			}
@@ -105,7 +96,7 @@ namespace shm
 		}
 
 		void Destroy();
-		operator bool() const noexcept { return node != nullptr; }
+		operator bool() const noexcept { return node; }
 
 		friend SharedMemory SharedCreator(std::string_view name, std::size_t size);
 		friend SharedMemory SharedObserver(std::string_view name, Permission permission);
@@ -114,7 +105,7 @@ namespace shm
 		{
 			if (permission & Permission::Write)
 			{
-				return static_cast<T*>(static_cast<detail::PageNode*>(node) + PageSize / sizeof(detail::PageNode);
+				return static_cast<T*>(static_cast<char*>(node) + PageSize);
 			}
 			throw std::runtime_error("No write permission");
 		}
@@ -124,7 +115,7 @@ namespace shm
 		{
 			if (permission & Permission::Read)
 			{
-				return static_cast<const T*>(static_cast<const detail::PageNode*>(node) + PageSize / sizeof(detail::PageNode);
+				return static_cast<const T*>(static_cast<const char*>(node) + PageSize);
 			}
 			throw std::runtime_error("No read permission");
 		}
@@ -136,9 +127,19 @@ namespace shm
 				"F must be invocable with the given arguments");
 			if (permission & Permission::Execute)
 			{
-				auto* func = static_cast<F*>(static_cast<void*>(
-					static_cast<detail::PageNode*>(node) + PageSize / sizeof(detail::PageNode)));
+				auto* func = static_cast<F*>(static_cast<const char*>(node) + PageSize);
 				return (*func)(std::forward<Args>(args)...);
+			}
+			throw std::runtime_error("No execute permission");
+		}
+		template<typename F>
+		F* Executable()
+		{
+			static_assert(std::is_invocable_v<F&>,
+				"F must be invocable");
+			if (permission & Permission::Execute)
+			{
+				return static_cast<F*>(static_cast<const char*>(node) + PageSize);
 			}
 			throw std::runtime_error("No execute permission");
 		}
@@ -165,7 +166,7 @@ namespace shm
 
 		std::size_t Size() const noexcept { return node->size; }
 	};
-#ifdef WIN32
+#ifdef _WIN32
 	consteval OSP os_ = OSP::Windows;
 #else 
 	consteval OSP os_ = OSP::Linux;
