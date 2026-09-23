@@ -1,48 +1,49 @@
 /*
-* Memory.hpp
+* VirtualMemory
 * 主要为虚拟内存封装
 * 并非智能指针
 * 若想用智能指针请使用<memory>库或自研
+* CopyRight by CZHurting(Bilibili:cz欠揍了)
 */
 
-#pragma once
+#ifndef UniqueMemory
+#define UniqueMemory
 #include <cstddef>
 #include <atomic>
+#include <SystemInfo.hpp>
+#include <cassert>
 
 
 namespace vm
 {
-	/*返回页大小*/
-	size_t PageSize();
-
-	/*内存保护权限*/
-	enum class Permission : std::uint8_t
-	{
-		Read = 1 << 0,
-		Write = 1 << 1,
-		Execute = 1 << 2,
-		None = 0
-	};
-	Permission operator|(Permission lhs, Permission rhs);
-	Permission operator&(Permission lhs, Permission rhs);
+	inline size_t PageSize = SystemInfo::GetSystemInfo().page_size;
 	
 
-	namespace detail2
+	enum class State:uint8_t
 	{
-		struct Node
+		COMMIT = 1,
+		RESERVE = 2,
+		GUARD = 4
+	};
+
+	namespace detail
+	{
+		struct alignas(4096) Node
 		{
 			std::size_t size{};
-			 std::size_t committed_size{};
+			std::byte bitmap[4096 - sizeof(std::size_t)];
 		};
 	}
 
 	/*内存锁*/
 	class UniqueMemoryLock
 	{
-		detail2::Node* memory;
+		void* p;
+		std::size_t size;
 		bool unlocked = false;
 	public:
-		UniqueMemoryLock(detail2::Node* p);
+		UniqueMemoryLock(detail::Node* p);
+		UniqueMemoryLock(void* p, std::size_t size);
 		UniqueMemoryLock(UniqueMemoryLock&) = delete;
 		UniqueMemoryLock& operator=(UniqueMemoryLock&) = delete;
 		UniqueMemoryLock(UniqueMemoryLock&&) noexcept;
@@ -59,32 +60,43 @@ namespace vm
 	*/
 	class UniqueCommit
 	{
+		void* p;
 		std::size_t size;
-		void* data;
 	public:
-
-		enum class State
+		UniqueCommit(std::size_t size, void* hint = nullptr);
+		UniqueCommit(UniqueCommit&) = delete;
+		UniqueCommit& operator=(UniqueCommit&) = delete;
+		UniqueCommit(UniqueCommit&& other) noexcept
 		{
-			NodeCommit=1,
-			ReLeasedCommit,
-			None=0
-		};
+			p = other.p;
+			size = other.size;
+			other.p = nullptr;
+			other.size = 0;
+		}
+		UniqueCommit& operator=(UniqueCommit&& other) noexcept
+		{
+			if (this == &other) return *this;
+			if (p) Destroy();
+			p = other.p;
+			size = other.size;
+			return *this;
+		}
 
-		/*分配物理内存，若失败抛std::bad_alloc*/
-		explicit UniqueCommit(std::size_t const size, void* hint = nullptr);
-		/*禁止拷贝*/
-		UniqueCommit(UniqueCommit const&) = delete;
-		UniqueCommit& operator=(UniqueCommit const&) = delete;
-		UniqueCommit(UniqueCommit&& other) noexcept;
-		UniqueCommit& operator=(UniqueCommit&& other) noexcept;
-		/*保证返回的指针能用*/
-		void* Data() const noexcept { return data; }
-		/*大小*/
-		std::size_t Size() const noexcept { return size; }
-		/*析构函数*/
-		~UniqueCommit() noexcept;
-		/*检查自己死了么*/
-		operator bool() const noexcept { return data != nullptr; }
+		void Destroy();
+		operator bool() { return p; }
+		void* Get()
+		{
+			return p;
+		}
+		const void* Get()const { return p; }
+		
+		UniqueMemoryLock MLock() { return { p,size }; }
+
+		~UniqueCommit()
+		{
+			if (p) Destroy();
+		}
+
 	};
 
 
@@ -94,35 +106,55 @@ namespace vm
 	*/
 	class UniqueVirtual
 	{
-		detail2::Node* base;
-
+		detail::Node* node;
+		std::size_t page_count;
 	public:
-		explicit UniqueVirtual(size_t size, void* hint = nullptr);
-		~UniqueVirtual() noexcept;
+		UniqueVirtual(std::size_t size);
+		UniqueVirtual(UniqueVirtual&) = delete;
+		UniqueVirtual& operator=(UniqueVirtual&) = delete;
+		UniqueVirtual(UniqueVirtual&& other) noexcept
+		{
+			node = other.node;
+			page_count = other.page_count;
+			other.node = nullptr;
+		}
+		UniqueVirtual& operator=(UniqueVirtual&& other) noexcept
+		{
+			if (this == &other) return *this;
+			if (node) Destroy();
+			node = other.node;
+			page_count = other.page_count;
+			other.node = nullptr;
+			return *this;
+		}
+		void Destroy();
+		operator bool() const { return node; }
 
-		// 移动
-		UniqueVirtual(UniqueVirtual&&) noexcept;
-		UniqueVirtual& operator=(UniqueVirtual&&) noexcept;
+		//不保证可用
+		template<typename T>
+		T* Base(std::size_t offset)
+		{
+			assert(offset <= node->size - sizeof(T));
+			return static_cast<T*>(reinterpret_cast<std::byte*>(node) + PageSize + offset);
+		}
 
-		// 禁止拷贝
-		UniqueVirtual(UniqueVirtual const&) = delete;
-		UniqueVirtual& operator=(UniqueVirtual const&) = delete;
+		//保证可用，但可能有额外的分配
+		template<typename T>
+		T* At(std::size_t offset)
+		{
+			assert(offset <= node->size - sizeof(T));
+			return Commit(offset);
+		}
 
-		// 查询
-		void* Data() const noexcept { return base; }
-		size_t Size() const noexcept { return base->size; }
-		size_t CommittedSize() const noexcept { return base->committed_size; }
-		bool IsFullyCommitted() const noexcept { return base->committed_size == base->size; }
-		explicit operator bool() const noexcept { return base != nullptr; }
+		void* Commit(std::size_t offset);
+		void Decommit(void* p);//需要保证p在这个内存中，否则可能失败
 
-		//分配
-		UniqueCommit Commit(std::size_t size);
+		UniqueMemoryLock MLock() { return { node }; }
 
-		// 确保某段可用（不够就补）
-		void EnsureRange(size_t bytes);
-
-		UniqueMemoryLock Lock();
-		// 释放所有权
-		void* Release() noexcept;
+		~UniqueVirtual()
+		{
+			if (node) Destroy();
+		}
 	};
 }
+#endif

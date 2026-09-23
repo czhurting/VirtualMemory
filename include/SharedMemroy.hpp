@@ -1,4 +1,13 @@
-#pragma once
+/*
+* VirtualMemory
+* 主要为虚拟内存封装
+* 并非智能指针
+* 若想用智能指针请使用<memory>库或自研
+* CopyRight by CZHurting(Bilibili:cz欠揍了)
+*/
+
+#ifndef __SharedMemory
+#define __SharedMemory
 
 #include <atomic>
 #include <string_view>
@@ -98,8 +107,8 @@ namespace shm
 		void Destroy();
 		operator bool() const noexcept { return node; }
 
-		friend SharedMemory SharedCreator(std::string_view name, std::size_t size);
-		friend SharedMemory SharedObserver(std::string_view name, Permission permission);
+		static SharedMemory SharedCreator(std::string_view name, std::size_t size);
+		static SharedMemory SharedObserver(std::string_view name, Permission permission);
 		template<typename T>
 		T* Write()
 		{
@@ -166,16 +175,10 @@ namespace shm
 
 		std::size_t Size() const noexcept { return node->size; }
 	};
-#ifdef _WIN32
-	consteval OSP os_ = OSP::Windows;
-#else 
-	consteval OSP os_ = OSP::Linux;
-#endif
-	SharedMemory<os_> SharedCreator(std::string_view name, std::size_t size);
-	SharedMemory<os_> SharedObserver(std::string_view name, Permission permission);
 
 	/*
 	*  注意：
 	* Node产生的内容为单独一页，并且不会暴露给外部。可能会产生不必要的内存浪费。
 	*/
 }
+#endif;
