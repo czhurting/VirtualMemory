@@ -12,26 +12,22 @@
 #include <atomic>
 #include <SystemInfo.hpp>
 #include <cassert>
+#include <vector>
+#include <array>
 
 
 namespace vm
 {
 	inline size_t PageSize = SystemInfo::GetSystemInfo().page_size;
-	
 
-	enum class State:uint8_t
+	namespace temp
 	{
-		COMMIT = 1,
-		RESERVE = 2,
-		GUARD = 4
-	};
-
-	namespace detail
-	{
-		struct alignas(4096) Node
+		template<typename T>
+		struct Node
 		{
+			T* p{};
+			std::size_t offset{};
 			std::size_t size{};
-			std::byte bitmap[4096 - sizeof(std::size_t)];
 		};
 	}
 
@@ -42,7 +38,6 @@ namespace vm
 		std::size_t size;
 		bool unlocked = false;
 	public:
-		UniqueMemoryLock(detail::Node* p);
 		UniqueMemoryLock(void* p, std::size_t size);
 		UniqueMemoryLock(UniqueMemoryLock&) = delete;
 		UniqueMemoryLock& operator=(UniqueMemoryLock&) = delete;
@@ -50,6 +45,7 @@ namespace vm
 		UniqueMemoryLock& operator=(UniqueMemoryLock&&) noexcept;
 		void Unlock();
 		std::size_t Size() const noexcept;
+		explicit operator bool() { return !unlocked; }
 		~UniqueMemoryLock();
 	};
 
@@ -106,16 +102,18 @@ namespace vm
 	*/
 	class UniqueVirtual
 	{
-		detail::Node* node;
-		std::size_t page_count;
+		void* node;
+		std::size_t size;
+		std::vector<std::array<int, 2>> freelist = std::vector<std::array<int, 2>>(1);
 	public:
+		/*受TLB影响，size的实际值可能并非参数而是size/页大小*页大小向上取整，这点可以通过调用Size函数看到实际的值。注：不同系统对应的页大小不同*/
 		UniqueVirtual(std::size_t size);
 		UniqueVirtual(UniqueVirtual&) = delete;
 		UniqueVirtual& operator=(UniqueVirtual&) = delete;
 		UniqueVirtual(UniqueVirtual&& other) noexcept
 		{
 			node = other.node;
-			page_count = other.page_count;
+			size = other.size;
 			other.node = nullptr;
 		}
 		UniqueVirtual& operator=(UniqueVirtual&& other) noexcept
@@ -123,33 +121,34 @@ namespace vm
 			if (this == &other) return *this;
 			if (node) Destroy();
 			node = other.node;
-			page_count = other.page_count;
+			size = other.size;
 			other.node = nullptr;
 			return *this;
 		}
 		void Destroy();
-		operator bool() const { return node; }
+		explicit operator bool() const { return node; }
+		std::size_t Size() { return size; }
 
 		//不保证可用
 		template<typename T>
-		T* Base(std::size_t offset)
+		temp::Node<T> Base(std::size_t offset,std::size_t size)
 		{
-			assert(offset <= node->size - sizeof(T));
-			return static_cast<T*>(reinterpret_cast<std::byte*>(node) + PageSize + offset);
+			assert(offset + size <= this->size - sizeof(T));
+			return { static_cast<T*>(static_cast<char*>(node) + offset),offset,size };
 		}
 
 		//保证可用，但可能有额外的分配
 		template<typename T>
-		T* At(std::size_t offset)
+		temp::Node<T> At(std::size_t offset,std::size_t size)
 		{
-			assert(offset <= node->size - sizeof(T));
-			return Commit(offset);
+			assert(offset + size <= this->size - sizeof(T));
+			return { static_cast<T*>(Commit(offset,size)),offset,size };
 		}
 
-		void* Commit(std::size_t offset);
-		void Decommit(void* p);//需要保证p在这个内存中，否则可能失败
+		void* Commit(std::size_t offset,std::size_t size);
+		void Decommit(std::size_t offset,std::size_t size);
 
-		UniqueMemoryLock MLock() { return { node }; }
+		UniqueMemoryLock MLock() { return { node,size }; }
 
 		~UniqueVirtual()
 		{
