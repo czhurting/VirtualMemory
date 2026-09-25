@@ -6,26 +6,25 @@
 * CopyRight by CZHurting(Bilibili:cz欠揍了)
 */
 
-#ifndef UniqueMemory
-#define UniqueMemory
+#ifndef VM_UNIQUE_MEMORY_HPP
+#define VM_UNIQUE_MEMORY_HPP
 #include <cstddef>
 #include <atomic>
 #include <SystemInfo.hpp>
 #include <cassert>
 #include <vector>
-#include <array>
 
 
 namespace vm
 {
 	inline size_t PageSize = SystemInfo::GetSystemInfo().page_size;
-
-	namespace temp
+	
+	namespace detail
 	{
 		template<typename T>
 		struct Node
 		{
-			T* p{};
+			T* data{};
 			std::size_t offset{};
 			std::size_t size{};
 		};
@@ -45,7 +44,6 @@ namespace vm
 		UniqueMemoryLock& operator=(UniqueMemoryLock&&) noexcept;
 		void Unlock();
 		std::size_t Size() const noexcept;
-		explicit operator bool() { return !unlocked; }
 		~UniqueMemoryLock();
 	};
 
@@ -104,9 +102,7 @@ namespace vm
 	{
 		void* node;
 		std::size_t size;
-		std::vector<std::array<int, 2>> freelist = std::vector<std::array<int, 2>>(1);
 	public:
-		/*受TLB影响，size的实际值可能并非参数而是size/页大小*页大小向上取整，这点可以通过调用Size函数看到实际的值。注：不同系统对应的页大小不同*/
 		UniqueVirtual(std::size_t size);
 		UniqueVirtual(UniqueVirtual&) = delete;
 		UniqueVirtual& operator=(UniqueVirtual&) = delete;
@@ -126,23 +122,22 @@ namespace vm
 			return *this;
 		}
 		void Destroy();
-		explicit operator bool() const { return node; }
-		std::size_t Size() { return size; }
+		operator bool() const { return node; }
 
 		//不保证可用
 		template<typename T>
-		temp::Node<T> Base(std::size_t offset,std::size_t size)
+		detail::Node<T> Base(std::size_t offset,std::size_t size)
 		{
-			assert(offset + size <= this->size - sizeof(T));
-			return { static_cast<T*>(static_cast<char*>(node) + offset),offset,size };
+			assert(offset <= this->size - size);
+			return { static_cast<T*>(static_cast<char*>(node) + offset) ,offset,size };
 		}
 
 		//保证可用，但可能有额外的分配
 		template<typename T>
-		temp::Node<T> At(std::size_t offset,std::size_t size)
+		detail::Node<T> At(std::size_t offset,std::size_t size)
 		{
-			assert(offset + size <= this->size - sizeof(T));
-			return { static_cast<T*>(Commit(offset,size)),offset,size };
+			assert(offset <= this->size - size);
+			return { Commit(offset,size) ,offset,size };
 		}
 
 		void* Commit(std::size_t offset,std::size_t size);
