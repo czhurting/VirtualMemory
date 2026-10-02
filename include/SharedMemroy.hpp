@@ -1,4 +1,4 @@
-/*
+﻿/*
 * VirtualMemory
 * 主要为虚拟内存封装
 * 并非智能指针
@@ -6,21 +6,28 @@
 * CopyRight by CZHurting(Bilibili:cz欠揍了)
 */
 
-#ifndef __SharedMemory
-#define __SharedMemory
+#ifndef SHM_VIRTUAL_MEMORY_HPP
+#define SHM_VIRTUAL_MEMORY_HPP
 
 #include <atomic>
+#include <cstdint>
 #include <string_view>
 #include <SystemInfo.hpp>
 #include <Permission.hpp>
 #include <Config.hpp>
 #include <stdexcept>
-#include <typeinfo>
+#include <Mapping.hpp>
 
 namespace shm 
 {
-	inline std::size_t PageSize = SystemInfo::GetSystemInfo().page_size;
-	inline int PID = SystemInfo::GetPID();
+	inline std::size_t PageSize()
+	{
+		return SystemInfo::GetSystemInfo().page_size;
+	}
+	inline int StatePID()
+	{
+		return SystemInfo::GetPID();
+	}
 
 	namespace detail
 	{
@@ -32,17 +39,28 @@ namespace shm
 				(std::uint64_t(VIRTUAL_MEMORY__MAJOR_VERSION) << 32) |
 				(std::uint64_t(VIRTUAL_MEMORY__MINOR_VERSION) << 16) |
 				(std::uint64_t(VIRTUAL_MEMORY__PATCH_VERSION));
-			std::atomic<int> owner_pid;
-			std::atomic<std::uint64_t> create_time;
+			struct ProcessInformation
+			{
+				int pid{};
+				int create_time{};
+				enum class State :std::uint8_t
+				{
+					Dead = 0,
+					Alive = 1
+				};
+				State state{ State::Dead };
+			};
+			ProcessInformation pinfo[64];
+
 			std::atomic<std::size_t> ref_count{ 1 };
 			std::atomic<std::size_t> mlock_count{ 0 };
 			char name[256];
 			std::size_t size{};
-			std::atomic<std::size_t> weak_count{ 0 };
 			//不知道mutex是否为跨进程是否安全所以等会额外写跨进程锁
 			class ProcessMutex
 			{
-				std::atomic<std::int32_t> futex{};
+				std::atomic<std::int16_t> read_count{};
+				std::atomic<int> writer_pid{ 0 };
 
 				void FutexWait(std::int32_t expected);  // 平台相关实现放 .cpp
 				void FutexWake(int count);
@@ -51,18 +69,10 @@ namespace shm
 				void ReadUnlock();
 				void WriteLock();
 				void WriteUnlock();
-				void ExecLock();
-				void ExecUnlock();
 			};
 			ProcessMutex mutex{};
 		};
 	}
-
-	enum class OSP
-	{
-		Windows,
-		Linux
-	};
 
 	/*共享内存锁*/
 
@@ -71,9 +81,9 @@ namespace shm
 	class SharedMemory
 	{
 		detail::Node* node;
-		std::uintptr_t fd;//Windows: HANDLE, Linux: int
+		Map<os> map;
 		Permission permission;
-		SharedMemory(detail::Node* value, Permission permission, std::uintptr_t fd) :node(value), permission(permission), fd(fd)
+		SharedMemory(detail::Node* value, Permission permission, Map<os> map) :node(value), permission(permission),map(map)
 		{
 			if (!node)
 			{
@@ -95,6 +105,7 @@ namespace shm
 		}
 		SharedMemory& operator=(SharedMemory&& other) noexcept
 		{
+			if (this == &other) return;
 			Destroy();
 			node = other.node;
 			permission = other.permission;
@@ -106,15 +117,17 @@ namespace shm
 
 		void Destroy();
 		operator bool() const noexcept { return node; }
-
-		static SharedMemory SharedCreator(std::string_view name, std::size_t size);
-		static SharedMemory SharedObserver(std::string_view name, Permission permission);
+		//需要写Magic成员变量
+		static SharedMemory Create(std::string_view name, std::size_t size);
+		//需要验证magic成员变量
+		static SharedMemory Observe(std::string_view name, Permission permission);
 		template<typename T>
+		requires std::is_pod<T>
 		T* Write()
 		{
-			if (permission & Permission::Write)
+			if (static_cast<bool>(permission & Permission::Write))
 			{
-				return static_cast<T*>(static_cast<char*>(node) + PageSize);
+				return static_cast<T*>(static_cast<char*>(static_cast<void*>(node)) + PageSize);
 			}
 			throw std::runtime_error("No write permission");
 		}
@@ -124,33 +137,9 @@ namespace shm
 		{
 			if (permission & Permission::Read)
 			{
-				return static_cast<const T*>(static_cast<const char*>(node) + PageSize);
+				return static_cast<const T*>(static_cast<const char*>(static_cast<void*>(node)) + PageSize);
 			}
 			throw std::runtime_error("No read permission");
-		}
-
-		template<typename F, typename... Args>
-		decltype(auto) Executed(Args&&... args)
-		{
-			static_assert(std::is_invocable_v<F&, Args...>,
-				"F must be invocable with the given arguments");
-			if (permission & Permission::Execute)
-			{
-				auto* func = static_cast<F*>(static_cast<const char*>(node) + PageSize);
-				return (*func)(std::forward<Args>(args)...);
-			}
-			throw std::runtime_error("No execute permission");
-		}
-		template<typename F>
-		F* Executable()
-		{
-			static_assert(std::is_invocable_v<F&>,
-				"F must be invocable");
-			if (permission & Permission::Execute)
-			{
-				return static_cast<F*>(static_cast<const char*>(node) + PageSize);
-			}
-			throw std::runtime_error("No execute permission");
 		}
 		class SharedMemoryLock
 		{
@@ -181,4 +170,4 @@ namespace shm
 	* Node产生的内容为单独一页，并且不会暴露给外部。可能会产生不必要的内存浪费。
 	*/
 }
-#endif;
+#endif
