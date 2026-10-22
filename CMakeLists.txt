@@ -16,7 +16,13 @@ add_library(${PROJECT_NAME} SHARED
     ${PLATFORM_SRCS}
 )
 
+add_executable(test_execute test/size.cpp )
+
 target_include_directories(${PROJECT_NAME}
     PUBLIC
+    ${PROJECT_SOURCE_DIR}/include
+)
+target_include_directories(test_execute
+    PRIVATE
     ${PROJECT_SOURCE_DIR}/include
 )
