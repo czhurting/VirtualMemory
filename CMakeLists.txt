@@ -26,3 +26,14 @@ target_include_directories(test_execute
     PRIVATE
     ${PROJECT_SOURCE_DIR}/include
 )
+
+# vm 命名空间单元测试：验证 UniqueVirtual 的 commit/decommit free-list 合并逻辑
+add_executable(test_vm test/vm_test.cpp)
+target_include_directories(test_vm PRIVATE ${PROJECT_SOURCE_DIR}/include)
+target_compile_definitions(test_vm PRIVATE VM_TEST)
+if (MSVC)
+    target_compile_options(test_vm PRIVATE /utf-8)
+endif()
+
+enable_testing()
+add_test(NAME vm_test COMMAND test_vm)

@@ -216,6 +216,11 @@ namespace vm
 		}
 		operator bool() const { return node; }
 
+#ifdef VM_TEST
+		// 仅供单元测试观察 free list 内部状态；生产构建（未定义 VM_TEST）下不存在
+		const std::vector<std::pair<std::size_t, std::size_t>>& free_list() const { return freelist; }
+#endif
+
 		//不保证可用
 		template<typename T>
 		detail::Node<T> Base(std::size_t offset,std::size_t size)
@@ -238,29 +243,65 @@ namespace vm
 		{
 			assert(offset + size <= this->size);
 			std::size_t pagecount = (size - 1) / PageSize() + 1;
-		std::size_t realoffset = 0;
+			std::size_t realoffset = 0;
 			for (auto& [i, j] : freelist)
 			{
 				if (j - i < pagecount) continue;
-				realoffset = i * 4096;
+				realoffset = i * PageSize();
 				i += pagecount;
-				;
 				break;
 			}
 			void* hint = static_cast<void*>(static_cast<char*>(node) + realoffset);
-			return {
 #ifdef _WIN32
-				VirtualAlloc(hint, size, MEM_COMMIT, PAGE_READWRITE)
+			void* p = VirtualAlloc(hint, size, MEM_COMMIT, PAGE_READWRITE);
+			if(!p) throw std::bad_alloc{};
 #else
-				(mprotect(hint, size, PROT_READ | PROT_WRITE), hint)
+			if (mprotect(hint, size, PROT_READ | PROT_WRITE) != 0)
+				throw std::bad_alloc{};
+			void* p = hint;
 #endif
-				,
-				realoffset
-			};
+			return { p, realoffset };
 		}
 		void Decommit(std::size_t offset, std::size_t size)
 		{
+			assert(offset + size <= this->size);
+			const std::size_t ps = PageSize();
+			const std::size_t dstart = offset / ps;
+			const std::size_t dend = (offset + size + ps - 1) / ps;
 
+			std::size_t insert = freelist.size();          // 默认插末尾
+			for (std::size_t i = 0; i < freelist.size(); ++i)
+			{
+				if (dend <= freelist[i].first) {          // 新块整段落在 freelist[i] 之前
+					insert = i;
+					break;
+				}
+				if (freelist[i].first < dend && freelist[i].second > dstart)
+					throw std::logic_error{ "already decommitted / never committed" };
+			}
+
+			freelist.insert(freelist.begin() + insert, { dstart, dend });
+
+			if (insert + 1 < freelist.size() &&
+				freelist[insert].second == freelist[insert + 1].first) 
+			{
+				freelist[insert].second = freelist[insert + 1].second;
+				freelist.erase(freelist.begin() + insert + 1);
+			}
+			if (insert > 0 &&
+				freelist[insert - 1].second == freelist[insert].first)    // 左邻居
+			{
+				freelist[insert - 1].second = freelist[insert].second;
+				freelist.erase(freelist.begin() + insert);
+			}
+
+			void* addr = static_cast<char*>(node) + dstart * ps;
+			std::size_t bytes = (dend - dstart) * ps;
+#ifdef _WIN32
+			if (!VirtualFree(addr, bytes, MEM_DECOMMIT)) throw std::runtime_error{ "MEM_DECOMMIT failed" };
+#else
+			if (mprotect(addr, bytes, PROT_NONE) != 0)    throw std::runtime_error{ "mprotect failed" };
+#endif
 		}
 
 		UniqueMemoryLock MLock() { return { node,size }; }
