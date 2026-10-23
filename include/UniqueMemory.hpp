@@ -175,7 +175,7 @@ namespace vm
 		UniqueVirtual(std::size_t size)
 		{
 			std::size_t pagecount = (size - 1) / PageSize() + 1;
-			size = pagecount * PageSize();
+			this->size = pagecount * PageSize();
 			node =
 #ifdef _WIN32
 				VirtualAlloc(nullptr, size, MEM_RESERVE, PAGE_READWRITE);
@@ -225,7 +225,7 @@ namespace vm
 		template<typename T>
 		detail::Node<T> Base(std::size_t offset,std::size_t size)
 		{
-			assert(offset + size <= this->size);
+			assert(size <= this->size && offset <= this->size - size);  // 溢出安全:避免 offset+size 无符号回绕 / this->size-size 下溢
 			return { static_cast<T*>(static_cast<char*>(node) + offset) ,offset,size };
 		}
 
@@ -233,7 +233,7 @@ namespace vm
 		template<typename T>
 		detail::Node<T> At(std::size_t offset,std::size_t size)
 		{
-			assert(offset + size <= this->size);
+			assert(size <= this->size && offset <= this->size - size);  // 溢出安全:避免 offset+size 无符号回绕 / this->size-size 下溢
 			auto no = Commit(offset, size);
 			return { no.p ,no.offset,size };
 		}
@@ -241,7 +241,7 @@ namespace vm
 		//Commit(期望offset，所要大小)
 		n Commit(std::size_t offset, std::size_t size)
 		{
-			assert(offset + size <= this->size);
+			assert(size <= this->size && offset <= this->size - size);  // 溢出安全:避免 offset+size 无符号回绕 / this->size-size 下溢
 			std::size_t pagecount = (size - 1) / PageSize() + 1;
 			std::size_t realoffset = 0;
 			for (auto& [i, j] : freelist)
@@ -264,7 +264,7 @@ namespace vm
 		}
 		void Decommit(std::size_t offset, std::size_t size)
 		{
-			assert(offset + size <= this->size);
+			assert(size <= this->size && offset <= this->size - size);  // 溢出安全:避免 offset+size 无符号回绕 / this->size-size 下溢
 			const std::size_t ps = PageSize();
 			const std::size_t dstart = offset / ps;
 			const std::size_t dend = (offset + size + ps - 1) / ps;

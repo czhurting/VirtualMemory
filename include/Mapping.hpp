@@ -1,5 +1,5 @@
-#ifndef MAP
-#define MAP
+#ifndef MAPPINIG
+#define MAPPING
 
 #include <cstdint>
 #include <utility>

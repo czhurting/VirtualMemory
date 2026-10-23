@@ -17,7 +17,6 @@
 #include <Config.hpp>
 #include <stdexcept>
 #include <Mapping.hpp>
-#include <stdexcept>
 #include <iostream>
 #include <Time.hpp>
 
@@ -27,7 +26,7 @@ namespace shm
 	{
 		return SystemInfo::GetSystemInfo().page_size;
 	}
-	inline int StatePID()
+	inline pid_t StatePID()
 	{
 		return SystemInfo::GetPID();
 	}
@@ -46,8 +45,7 @@ namespace shm
 			struct ProcessInformation
 			{
 				std::uint32_t pid{};
-				std::uint32_t create_time_high{};
-				std::uint32_t create_time_low{};
+				std::uint64_t create_time{};
 				enum class State :std::uint8_t
 				{
 					Dead = 0,
